@@ -98,8 +98,7 @@ public interface IColumn : IColumnBase
                 continue;
             }
 
-            var converter = property.GetValueConverter() ?? PropertyMappings.First().TypeMapping.Converter;
-
+            var converter = property.GetValueConverter() ?? mapping.TypeMapping.Converter;
             if (converter != null)
             {
                 defaultValue = converter.ConvertToProvider(defaultValue);

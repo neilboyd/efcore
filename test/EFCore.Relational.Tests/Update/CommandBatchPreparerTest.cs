@@ -975,7 +975,7 @@ FakeEntity [Deleted]"
                 modificationCommandBatchFactory,
                 new ParameterNameGeneratorFactory(new ParameterNameGeneratorDependencies()),
                 new ModificationCommandComparer(),
-                new KeyValueIndexFactorySource(),
+                new RowForeignKeyValueFactoryFactory(),
                 new ModificationCommandFactory(),
                 loggingOptions,
                 new FakeDiagnosticsLogger<DbLoggerCategory.Update>(),

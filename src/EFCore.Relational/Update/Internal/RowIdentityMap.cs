@@ -1,10 +1,9 @@
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
-using Microsoft.EntityFrameworkCore.Internal;
-using Microsoft.EntityFrameworkCore.Update.Internal;
+using Microsoft.EntityFrameworkCore.Metadata.Internal;
 
-namespace Microsoft.EntityFrameworkCore.Metadata.Internal;
+namespace Microsoft.EntityFrameworkCore.Update.Internal;
 
 /// <summary>
 ///     This is an internal API that supports the Entity Framework Core infrastructure and not subject to
@@ -12,26 +11,53 @@ namespace Microsoft.EntityFrameworkCore.Metadata.Internal;
 ///     any release. You should only use it directly in your code with extreme caution and knowing that
 ///     doing so can result in application failures when updating to a new Entity Framework Core release.
 /// </summary>
-public class UniqueConstraint : Annotatable, IPrimaryKeyConstraint
+public class RowIdentityMap<TKey> : IRowIdentityMap
+    where TKey : notnull
 {
+    private readonly bool _sensitiveLoggingEnabled;
+    private readonly IUniqueConstraint _key;
+    private readonly Dictionary<TKey, IModificationCommand> _identityMap;
+    private readonly IRowKeyValueFactory<TKey> _principalKeyValueFactory;
+
     /// <summary>
     ///     This is an internal API that supports the Entity Framework Core infrastructure and not subject to
     ///     the same compatibility standards as public APIs. It may be changed or removed without notice in
     ///     any release. You should only use it directly in your code with extreme caution and knowing that
     ///     doing so can result in application failures when updating to a new Entity Framework Core release.
     /// </summary>
-    public UniqueConstraint(
-        string name,
-        Table table,
-        IReadOnlyList<Column> columns)
+    public RowIdentityMap(
+        IUniqueConstraint key,
+        bool sensitiveLoggingEnabled)
     {
-        Name = name;
-        Table = table;
-        Columns = columns;
+        _sensitiveLoggingEnabled = sensitiveLoggingEnabled;
+        _key = key;
+        _principalKeyValueFactory = ((UniqueConstraint)_key).GetRowKeyValueFactory<TKey>();
+        _identityMap = new Dictionary<TKey, IModificationCommand>(_principalKeyValueFactory.EqualityComparer);
+    }
+     
+    /// <summary>
+    ///     This is an internal API that supports the Entity Framework Core infrastructure and not subject to
+    ///     the same compatibility standards as public APIs. It may be changed or removed without notice in
+    ///     any release. You should only use it directly in your code with extreme caution and knowing that
+    ///     doing so can result in application failures when updating to a new Entity Framework Core release.
+    /// </summary>
+    public virtual IModificationCommand? TryGetEntry(object?[] keyValues)
+    {
+        var key = _principalKeyValueFactory.CreateKeyValue(keyValues);
+        return key != null && _identityMap.TryGetValue(key, out var entry) ? entry : null;
     }
 
-    /// <inheritdoc />
-    public virtual string Name { get; }
+    /// <summary>
+    ///     This is an internal API that supports the Entity Framework Core infrastructure and not subject to
+    ///     the same compatibility standards as public APIs. It may be changed or removed without notice in
+    ///     any release. You should only use it directly in your code with extreme caution and knowing that
+    ///     doing so can result in application failures when updating to a new Entity Framework Core release.
+    /// </summary>
+    public virtual IModificationCommand? TryGetEntry(IDictionary<string, object?> keyPropertyValues, IEntityType entityType)
+    {
+        var key = _principalKeyValueFactory.CreateKeyValue(keyPropertyValues, entityType);
+        return key != null && _identityMap.TryGetValue(key, out var entry) ? entry : null;
+    }
 
     /// <summary>
     ///     This is an internal API that supports the Entity Framework Core infrastructure and not subject to
@@ -39,7 +65,8 @@ public class UniqueConstraint : Annotatable, IPrimaryKeyConstraint
     ///     any release. You should only use it directly in your code with extreme caution and knowing that
     ///     doing so can result in application failures when updating to a new Entity Framework Core release.
     /// </summary>
-    public virtual SortedSet<IKey> MappedKeys { get; } = new(KeyComparer.Instance);
+    public virtual void Add(IModificationCommand entry)
+        => Add(_principalKeyValueFactory.CreateKeyValue(entry), entry);
 
     /// <summary>
     ///     This is an internal API that supports the Entity Framework Core infrastructure and not subject to
@@ -47,7 +74,42 @@ public class UniqueConstraint : Annotatable, IPrimaryKeyConstraint
     ///     any release. You should only use it directly in your code with extreme caution and knowing that
     ///     doing so can result in application failures when updating to a new Entity Framework Core release.
     /// </summary>
-    public virtual Table Table { get; }
+    protected virtual void Add(TKey key, IModificationCommand entry)
+        => Add(key, entry, updateDuplicate: false);
+
+    private void Add(TKey key, IModificationCommand entry, bool updateDuplicate)
+    {
+        if (_identityMap.TryGetValue(key, out var existingEntry))
+        {
+            if (!updateDuplicate)
+            {
+                if (existingEntry == entry)
+                {
+                    return;
+                }
+
+                ThrowIdentityConflict(entry);
+            }
+        }
+
+        _identityMap[key] = entry;
+    }
+
+    private void ThrowIdentityConflict(IModificationCommand entry)
+    {
+        //if (_sensitiveLoggingEnabled)
+        //{
+        //    throw new InvalidOperationException(
+        //        CoreStrings.IdentityConflictSensitive(
+        //            entry.EntityType.DisplayName(),
+        //            entry.BuildCurrentValuesString(Key.Columns)));
+        //}
+
+        //throw new InvalidOperationException(
+        //    CoreStrings.IdentityConflict(
+        //        entry.EntityType.DisplayName(),
+        //        Key.Columns.Format()));
+    }
 
     /// <summary>
     ///     This is an internal API that supports the Entity Framework Core infrastructure and not subject to
@@ -55,7 +117,8 @@ public class UniqueConstraint : Annotatable, IPrimaryKeyConstraint
     ///     any release. You should only use it directly in your code with extreme caution and knowing that
     ///     doing so can result in application failures when updating to a new Entity Framework Core release.
     /// </summary>
-    public virtual IReadOnlyList<Column> Columns { get; }
+    public virtual void Remove(IModificationCommand entry)
+        => Remove(_principalKeyValueFactory.CreateKeyValue(entry), entry);
 
     /// <summary>
     ///     This is an internal API that supports the Entity Framework Core infrastructure and not subject to
@@ -63,49 +126,12 @@ public class UniqueConstraint : Annotatable, IPrimaryKeyConstraint
     ///     any release. You should only use it directly in your code with extreme caution and knowing that
     ///     doing so can result in application failures when updating to a new Entity Framework Core release.
     /// </summary>
-    public override bool IsReadOnly
-        => Table.Model.IsReadOnly;
-
-    private object? _rowKeyValueFactory;
-
-    /// <summary>
-    ///     This is an internal API that supports the Entity Framework Core infrastructure and not subject to
-    ///     the same compatibility standards as public APIs. It may be changed or removed without notice in
-    ///     any release. You should only use it directly in your code with extreme caution and knowing that
-    ///     doing so can result in application failures when updating to a new Entity Framework Core release.
-    /// </summary>
-    public virtual IRowKeyValueFactory<TKey> GetRowKeyValueFactory<TKey>()
-        => (IRowKeyValueFactory<TKey>)NonCapturingLazyInitializer.EnsureInitialized(
-            ref _rowKeyValueFactory, this,
-            static constraint => constraint.Table.Model.Model.GetRelationalDependencies().RowKeyValueFactoryFactory.Create<TKey>(constraint));
-
-    /// <summary>
-    ///     This is an internal API that supports the Entity Framework Core infrastructure and not subject to
-    ///     the same compatibility standards as public APIs. It may be changed or removed without notice in
-    ///     any release. You should only use it directly in your code with extreme caution and knowing that
-    ///     doing so can result in application failures when updating to a new Entity Framework Core release.
-    /// </summary>
-    public virtual Type GetKeyType()
-        => Columns.Count > 1 ? typeof(object[]) : ((IColumnBase)Columns.First()).ProviderClrType;
-
-    /// <summary>
-    ///     This is an internal API that supports the Entity Framework Core infrastructure and not subject to
-    ///     the same compatibility standards as public APIs. It may be changed or removed without notice in
-    ///     any release. You should only use it directly in your code with extreme caution and knowing that
-    ///     doing so can result in application failures when updating to a new Entity Framework Core release.
-    /// </summary>
-    public override string ToString()
-        => ((IUniqueConstraint)this).ToDebugString(MetadataDebugStringOptions.SingleLineDefault);
-
-    /// <inheritdoc />
-    ITable IUniqueConstraint.Table
-        => Table;
-
-    /// <inheritdoc />
-    IReadOnlyList<IColumn> IUniqueConstraint.Columns
-        => Columns;
-
-    /// <inheritdoc />
-    IEnumerable<IKey> IUniqueConstraint.MappedKeys
-        => MappedKeys;
+    protected virtual void Remove(TKey key, IModificationCommand entry)
+    {
+        if (_identityMap.TryGetValue(key, out var existingEntry)
+            && existingEntry == entry)
+        {
+            _identityMap.Remove(key);
+        }
+    }
 }

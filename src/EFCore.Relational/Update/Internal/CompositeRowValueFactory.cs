@@ -1,10 +1,9 @@
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
-using Microsoft.EntityFrameworkCore.Internal;
-using Microsoft.EntityFrameworkCore.Update.Internal;
+using System.Diagnostics.CodeAnalysis;
 
-namespace Microsoft.EntityFrameworkCore.Metadata.Internal;
+namespace Microsoft.EntityFrameworkCore.Update.Internal;
 
 /// <summary>
 ///     This is an internal API that supports the Entity Framework Core infrastructure and not subject to
@@ -12,7 +11,7 @@ namespace Microsoft.EntityFrameworkCore.Metadata.Internal;
 ///     any release. You should only use it directly in your code with extreme caution and knowing that
 ///     doing so can result in application failures when updating to a new Entity Framework Core release.
 /// </summary>
-public class ForeignKeyConstraint : Annotatable, IForeignKeyConstraint
+public class CompositeRowValueFactory : IRowForeignKeyValueFactory<object[]>
 {
     /// <summary>
     ///     This is an internal API that supports the Entity Framework Core infrastructure and not subject to
@@ -20,24 +19,19 @@ public class ForeignKeyConstraint : Annotatable, IForeignKeyConstraint
     ///     any release. You should only use it directly in your code with extreme caution and knowing that
     ///     doing so can result in application failures when updating to a new Entity Framework Core release.
     /// </summary>
-    public ForeignKeyConstraint(
-        string name,
-        Table table,
-        Table principalTable,
-        IReadOnlyList<Column> columns,
-        UniqueConstraint principalUniqueConstraint,
-        ReferentialAction onDeleteAction)
+    public CompositeRowValueFactory(IReadOnlyList<IColumn> columns)
     {
-        Name = name;
-        Table = table;
-        PrincipalTable = principalTable;
         Columns = columns;
-        PrincipalUniqueConstraint = principalUniqueConstraint;
-        OnDeleteAction = onDeleteAction;
+        EqualityComparer = CreateEqualityComparer(columns);
     }
 
-    /// <inheritdoc />
-    public virtual string Name { get; }
+    /// <summary>
+    ///     This is an internal API that supports the Entity Framework Core infrastructure and not subject to
+    ///     the same compatibility standards as public APIs. It may be changed or removed without notice in
+    ///     any release. You should only use it directly in your code with extreme caution and knowing that
+    ///     doing so can result in application failures when updating to a new Entity Framework Core release.
+    /// </summary>
+    public virtual IEqualityComparer<object[]> EqualityComparer { get; }
 
     /// <summary>
     ///     This is an internal API that supports the Entity Framework Core infrastructure and not subject to
@@ -45,7 +39,7 @@ public class ForeignKeyConstraint : Annotatable, IForeignKeyConstraint
     ///     any release. You should only use it directly in your code with extreme caution and knowing that
     ///     doing so can result in application failures when updating to a new Entity Framework Core release.
     /// </summary>
-    public virtual SortedSet<IForeignKey> MappedForeignKeys { get; } = new(ForeignKeyComparer.Instance);
+    protected virtual IReadOnlyList<IProperty> Columns { get; }
 
     /// <summary>
     ///     This is an internal API that supports the Entity Framework Core infrastructure and not subject to
@@ -53,7 +47,25 @@ public class ForeignKeyConstraint : Annotatable, IForeignKeyConstraint
     ///     any release. You should only use it directly in your code with extreme caution and knowing that
     ///     doing so can result in application failures when updating to a new Entity Framework Core release.
     /// </summary>
-    public virtual Table Table { get; }
+    public virtual bool TryCreateFromBuffer(in ValueBuffer valueBuffer, [NotNullWhen(true)] out object[]? key)
+    {
+        key = new object[Columns.Count];
+        var index = 0;
+
+        foreach (var property in Columns)
+        {
+            var value = valueBuffer[property.GetIndex()];
+            if (value == null)
+            {
+                key = null;
+                return false;
+            }
+
+            key[index++] = value;
+        }
+
+        return true;
+    }
 
     /// <summary>
     ///     This is an internal API that supports the Entity Framework Core infrastructure and not subject to
@@ -61,7 +73,8 @@ public class ForeignKeyConstraint : Annotatable, IForeignKeyConstraint
     ///     any release. You should only use it directly in your code with extreme caution and knowing that
     ///     doing so can result in application failures when updating to a new Entity Framework Core release.
     /// </summary>
-    public virtual Table PrincipalTable { get; }
+    public virtual bool TryCreateFromCurrentValues(IUpdateEntry entry, [NotNullWhen(true)] out object[]? key)
+        => TryCreateFromEntry(entry, (e, p) => e.GetCurrentValue(p), out key);
 
     /// <summary>
     ///     This is an internal API that supports the Entity Framework Core infrastructure and not subject to
@@ -69,7 +82,8 @@ public class ForeignKeyConstraint : Annotatable, IForeignKeyConstraint
     ///     any release. You should only use it directly in your code with extreme caution and knowing that
     ///     doing so can result in application failures when updating to a new Entity Framework Core release.
     /// </summary>
-    public virtual IReadOnlyList<Column> Columns { get; }
+    public virtual bool TryCreateFromPreStoreGeneratedCurrentValues(IUpdateEntry entry, [NotNullWhen(true)] out object[]? key)
+        => TryCreateFromEntry(entry, (e, p) => e.GetPreStoreGeneratedCurrentValue(p), out key);
 
     /// <summary>
     ///     This is an internal API that supports the Entity Framework Core infrastructure and not subject to
@@ -77,7 +91,8 @@ public class ForeignKeyConstraint : Annotatable, IForeignKeyConstraint
     ///     any release. You should only use it directly in your code with extreme caution and knowing that
     ///     doing so can result in application failures when updating to a new Entity Framework Core release.
     /// </summary>
-    public virtual IReadOnlyList<Column> PrincipalColumns => PrincipalUniqueConstraint.Columns;
+    public virtual bool TryCreateFromOriginalValues(IUpdateEntry entry, [NotNullWhen(true)] out object[]? key)
+        => TryCreateFromEntry(entry, (e, p) => e.GetOriginalValue(p), out key);
 
     /// <summary>
     ///     This is an internal API that supports the Entity Framework Core infrastructure and not subject to
@@ -85,7 +100,8 @@ public class ForeignKeyConstraint : Annotatable, IForeignKeyConstraint
     ///     any release. You should only use it directly in your code with extreme caution and knowing that
     ///     doing so can result in application failures when updating to a new Entity Framework Core release.
     /// </summary>
-    public virtual UniqueConstraint PrincipalUniqueConstraint { get; }
+    public virtual bool TryCreateFromRelationshipSnapshot(IUpdateEntry entry, [NotNullWhen(true)] out object[]? key)
+        => TryCreateFromEntry(entry, (e, p) => e.GetRelationshipSnapshotValue(p), out key);
 
     /// <summary>
     ///     This is an internal API that supports the Entity Framework Core infrastructure and not subject to
@@ -93,13 +109,28 @@ public class ForeignKeyConstraint : Annotatable, IForeignKeyConstraint
     ///     any release. You should only use it directly in your code with extreme caution and knowing that
     ///     doing so can result in application failures when updating to a new Entity Framework Core release.
     /// </summary>
-    public override bool IsReadOnly
-        => Table.Model.IsReadOnly;
+    protected virtual bool TryCreateFromEntry(
+        IUpdateEntry entry,
+        Func<IUpdateEntry, IProperty, object?> getValue,
+        [NotNullWhen(true)] out object[]? key)
+    {
+        key = new object[Columns.Count];
+        var index = 0;
 
-    /// <inheritdoc />
-    public virtual ReferentialAction OnDeleteAction { get; set; }
+        foreach (var property in Columns)
+        {
+            var value = getValue(entry, property);
+            if (value == null)
+            {
+                key = null;
+                return false;
+            }
 
-    private IRowForeignKeyValueFactory? _foreignKeyRowValueFactory;
+            key[index++] = value;
+        }
+
+        return true;
+    }
 
     /// <summary>
     ///     This is an internal API that supports the Entity Framework Core infrastructure and not subject to
@@ -107,41 +138,65 @@ public class ForeignKeyConstraint : Annotatable, IForeignKeyConstraint
     ///     any release. You should only use it directly in your code with extreme caution and knowing that
     ///     doing so can result in application failures when updating to a new Entity Framework Core release.
     /// </summary>
-    public virtual IRowForeignKeyValueFactory GetRowForeignKeyValueFactory()
-        => NonCapturingLazyInitializer.EnsureInitialized(
-            ref _foreignKeyRowValueFactory, this,
-            static constraint => constraint.Table.Model.Model.GetRelationalDependencies().RowForeignKeyValueFactoryFactory.Create(constraint));
+    protected static IEqualityComparer<object[]> CreateEqualityComparer(IReadOnlyList<IProperty> properties)
+        => new CompositeCustomComparer(properties.Select(p => p.GetKeyValueComparer()).ToList());
 
-    /// <summary>
-    ///     This is an internal API that supports the Entity Framework Core infrastructure and not subject to
-    ///     the same compatibility standards as public APIs. It may be changed or removed without notice in
-    ///     any release. You should only use it directly in your code with extreme caution and knowing that
-    ///     doing so can result in application failures when updating to a new Entity Framework Core release.
-    /// </summary>
-    public override string ToString()
-        => ((IForeignKeyConstraint)this).ToDebugString(MetadataDebugStringOptions.SingleLineDefault);
+    private sealed class CompositeCustomComparer : IEqualityComparer<object[]>
+    {
+        private readonly Func<object, object, bool>[] _equals;
+        private readonly Func<object, int>[] _hashCodes;
 
-    /// <inheritdoc />
-    IEnumerable<IForeignKey> IForeignKeyConstraint.MappedForeignKeys
-        => MappedForeignKeys;
+        public CompositeCustomComparer(IList<ValueComparer> comparers)
+        {
+            _equals = comparers.Select(c => (Func<object, object, bool>)c.Equals).ToArray();
+            _hashCodes = comparers.Select(c => (Func<object, int>)c.GetHashCode).ToArray();
+        }
 
-    /// <inheritdoc />
-    ITable IForeignKeyConstraint.Table
-        => Table;
+        public bool Equals(object[]? x, object[]? y)
+        {
+            if (ReferenceEquals(x, y))
+            {
+                return true;
+            }
 
-    /// <inheritdoc />
-    ITable IForeignKeyConstraint.PrincipalTable
-        => PrincipalTable;
+            if (x is null)
+            {
+                return y is null;
+            }
 
-    /// <inheritdoc />
-    IReadOnlyList<IColumn> IForeignKeyConstraint.Columns
-        => Columns;
+            if (y is null)
+            {
+                return false;
+            }
 
-    /// <inheritdoc />
-    IReadOnlyList<IColumn> IForeignKeyConstraint.PrincipalColumns
-        => PrincipalColumns;
+            if (x.Length != y.Length)
+            {
+                return false;
+            }
 
-    /// <inheritdoc />
-    IUniqueConstraint IForeignKeyConstraint.PrincipalUniqueConstraint
-        => PrincipalUniqueConstraint;
+            for (var i = 0; i < x.Length; i++)
+            {
+                if (!_equals[i](x[i], y[i]))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        public int GetHashCode(object[] obj)
+        {
+            var hashCode = 0;
+
+            // ReSharper disable once ForCanBeConvertedToForeach
+            // ReSharper disable once LoopCanBeConvertedToQuery
+            for (var i = 0; i < obj.Length; i++)
+            {
+                hashCode = (hashCode * 397) ^ _hashCodes[i](obj[i]);
+            }
+
+            return hashCode;
+        }
+    }
 }

@@ -1691,7 +1691,7 @@ public class MigrationsModelDiffer : IMigrationsModelDiffer
 
         foreach (var targetEntityType in target.Model.GetEntityTypes())
         {
-            foreach (var targetSeed in targetEntityType.GetSeedData())
+            foreach (var targetSeed in targetEntityType.GetSeedData(providerValues: true))
             {
                 var targetEntry = _targetUpdateAdapter.CreateEntry(targetSeed, targetEntityType);
                 if (targetEntry.ToEntityEntry().Entity is Dictionary<string, object> targetBag)
@@ -2163,6 +2163,26 @@ public class MigrationsModelDiffer : IMigrationsModelDiffer
         {
             yield return operation;
         }
+    }
+
+    /// <summary>
+    ///     This is an internal API that supports the Entity Framework Core infrastructure and not subject to
+    ///     the same compatibility standards as public APIs. It may be changed or removed without notice in
+    ///     any release. You should only use it directly in your code with extreme caution and knowing that
+    ///     doing so can result in application failures when updating to a new Entity Framework Core release.
+    /// </summary>
+    private IModificationCommand CreateCommand(IDictionary<string, object?> values, IEntityType entityType)
+    {
+        var i = 0;
+        var valuesArray = new object?[entityType.PropertyCount()];
+        foreach (var property in entityType.GetProperties())
+        {
+            valuesArray[i++] = values.TryGetValue(property.Name, out var value)
+                ? value
+                : property.ClrType.GetDefaultValue();
+        }
+
+        return entry;
     }
 
     private IEnumerable<MigrationOperation> GetDataOperations(

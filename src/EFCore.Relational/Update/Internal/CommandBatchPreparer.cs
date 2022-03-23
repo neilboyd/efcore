@@ -575,13 +575,11 @@ public class CommandBatchPreparer : ICommandBatchPreparer
                             var dependentKeyValue = Dependencies.KeyValueIndexFactorySource
                                 .GetKeyValueIndexFactory(foreignKey.PrincipalKey)
                                 .CreateDependentKeyValue(entry, foreignKey);
-                            if (dependentKeyValue == null)
+                            if (dependentKeyValue != null)
                             {
-                                continue;
+                                AddMatchingPredecessorEdge(
+                                    predecessorsMap, dependentKeyValue, commandGraph, command, foreignKey);
                             }
-
-                            AddMatchingPredecessorEdge(
-                                predecessorsMap, dependentKeyValue, commandGraph, command, foreignKey);
                         }
                     }
 
