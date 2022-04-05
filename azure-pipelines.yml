@@ -50,6 +50,7 @@ stages:
   jobs:
     - template: eng/common/templates/jobs/jobs.yml
       parameters:
+        runAsPublic: true
         enableMicrobuild: true
         enablePublishBuildArtifacts: true
         enablePublishBuildAssets: true
